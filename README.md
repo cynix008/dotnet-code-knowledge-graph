@@ -337,15 +337,10 @@ Known limitations:
 
 ## License
 
-Add your license here.
-
-Example:
-
 ```text
 MIT License
 ```
 
----
 
 ## Author
 
