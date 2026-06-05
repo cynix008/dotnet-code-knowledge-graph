@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Knowledge Graph Viewer</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif; background: #0f172a; color: #e2e8f0; overflow: hidden; }
+
+  #toolbar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+    display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+    background: rgba(15,23,42,0.92); backdrop-filter: blur(8px); border-bottom: 1px solid #1e293b;
+  }
+  #toolbar h1 { font-size: 15px; font-weight: 600; white-space: nowrap; }
+  #toolbar .sep { width: 1px; height: 24px; background: #334155; }
+
+  .filter-btn {
+    padding: 4px 10px; border-radius: 6px; border: 1px solid #334155;
+    background: transparent; color: #94a3b8; font-size: 12px; cursor: pointer; transition: all .15s;
+  }
+  .filter-btn:hover { border-color: #64748b; color: #e2e8f0; }
+  .filter-btn.active { background: #1e293b; border-color: #3b82f6; color: #60a5fa; }
+
+  #search {
+    margin-left: auto; padding: 5px 10px; border-radius: 6px; border: 1px solid #334155;
+    background: #1e293b; color: #e2e8f0; font-size: 13px; width: 220px; outline: none;
+  }
+  #search:focus { border-color: #3b82f6; }
+  #search::placeholder { color: #475569; }
+
+  #graph { width: 100vw; height: 100vh; }
+
+  #tooltip {
+    position: fixed; pointer-events: none; z-index: 20;
+    background: #1e293b; border: 1px solid #334155; border-radius: 8px;
+    padding: 10px 14px; font-size: 12px; line-height: 1.5; max-width: 360px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.4); display: none;
+  }
+  #tooltip .tt-type { color: #64748b; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+  #tooltip .tt-label { font-weight: 600; font-size: 14px; margin: 2px 0 4px; }
+  #tooltip .tt-desc { color: #94a3b8; }
+  #tooltip .tt-meta { color: #64748b; margin-top: 4px; font-size: 11px; }
+
+  #legend {
+    position: fixed; bottom: 16px; left: 16px; z-index: 10;
+    background: rgba(15,23,42,0.92); backdrop-filter: blur(8px);
+    border: 1px solid #1e293b; border-radius: 10px; padding: 12px 16px;
+    display: flex; flex-wrap: wrap; gap: 10px; max-width: 600px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #94a3b8; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+  #stats {
+    position: fixed; bottom: 16px; right: 16px; z-index: 10;
+    background: rgba(15,23,42,0.92); backdrop-filter: blur(8px);
+    border: 1px solid #1e293b; border-radius: 10px; padding: 10px 14px;
+    font-size: 11px; color: #64748b;
+  }
+
+  #detail-panel {
+    position: fixed; top: 0; right: 0; bottom: 0; width: 380px; z-index: 30;
+    background: #0f172a; border-left: 1px solid #1e293b;
+    transform: translateX(100%); transition: transform .25s ease;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  #detail-panel.open { transform: translateX(0); }
+
+  .dp-header {
+    padding: 16px 18px 12px; border-bottom: 1px solid #1e293b;
+    display: flex; align-items: flex-start; gap: 10px; flex-shrink: 0;
+  }
+  .dp-header-info { flex: 1; min-width: 0; }
+  .dp-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px;
+    font-weight: 600; text-transform: uppercase; letter-spacing: .5px;
+  }
+  .dp-title { font-size: 16px; font-weight: 700; margin: 6px 0 2px; word-break: break-word; }
+  .dp-desc { font-size: 12px; color: #94a3b8; line-height: 1.5; margin-top: 4px; }
+  .dp-meta { font-size: 11px; color: #475569; margin-top: 2px; }
+  .dp-close {
+    width: 28px; height: 28px; border-radius: 6px; border: 1px solid #334155;
+    background: transparent; color: #94a3b8; font-size: 16px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .dp-close:hover { background: #1e293b; color: #e2e8f0; }
+
+  .dp-body { flex: 1; overflow-y: auto; padding: 0 0 16px; }
+  .dp-body::-webkit-scrollbar { width: 5px; }
+  .dp-body::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+
+  .dp-section { padding: 12px 18px 0; }
+  .dp-section-title {
+    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px;
+    color: #475569; margin-bottom: 8px; display: flex; align-items: center; gap: 6px;
+  }
+  .dp-section-title .dp-count {
+    background: #1e293b; padding: 1px 6px; border-radius: 10px; font-size: 10px; color: #64748b;
+  }
+  .dp-edge-line {
+    display: inline-block; width: 18px; height: 2px; border-radius: 1px; vertical-align: middle; margin-right: 4px;
+  }
+
+  .dp-item {
+    display: flex; align-items: center; gap: 8px; padding: 6px 10px; margin-bottom: 2px;
+    border-radius: 6px; cursor: pointer; transition: background .1s;
+  }
+  .dp-item:hover { background: #1e293b; }
+  .dp-item-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .dp-item-label { font-size: 12px; color: #e2e8f0; flex: 1; min-width: 0; }
+  .dp-item-type { font-size: 10px; color: #475569; flex-shrink: 0; }
+  .dp-item-arrow { color: #334155; font-size: 12px; flex-shrink: 0; }
+  .dp-item-detail { font-size: 10px; color: #64748b; margin-left: 16px; margin-top: -2px; margin-bottom: 4px; }
+
+  .dp-breadcrumb {
+    padding: 8px 18px; border-bottom: 1px solid #1e293b; display: flex;
+    align-items: center; gap: 4px; flex-shrink: 0; flex-wrap: wrap;
+  }
+  .dp-crumb {
+    font-size: 11px; color: #3b82f6; cursor: pointer; background: none; border: none;
+    padding: 2px 4px; border-radius: 3px;
+  }
+  .dp-crumb:hover { background: #1e293b; text-decoration: underline; }
+  .dp-crumb-sep { color: #334155; font-size: 11px; }
+  .dp-crumb-current { font-size: 11px; color: #94a3b8; padding: 2px 4px; }
+
+  /* Upload overlay */
+  #upload-overlay {
+    position: fixed; inset: 0; z-index: 100;
+    background: #0f172a;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    transition: opacity .3s;
+  }
+  #upload-overlay.hidden { opacity: 0; pointer-events: none; }
+  .upload-box {
+    border: 2px dashed #334155; border-radius: 16px; padding: 48px 64px;
+    text-align: center; cursor: pointer; transition: border-color .2s, background .2s;
+    max-width: 520px;
+  }
+  .upload-box:hover, .upload-box.drag-over {
+    border-color: #3b82f6; background: rgba(59,130,246,0.05);
+  }
+  .upload-box h2 { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
+  .upload-box p { color: #64748b; font-size: 14px; line-height: 1.6; }
+  .upload-box .upload-icon { font-size: 48px; margin-bottom: 16px; display: block; color: #3b82f6; }
+  .upload-box .upload-hint {
+    margin-top: 16px; font-size: 12px; color: #475569;
+    padding: 8px 16px; background: #1e293b; border-radius: 8px; display: inline-block;
+  }
+  .upload-box input[type=file] { display: none; }
+  #upload-overlay .auto-status { margin-top: 24px; font-size: 12px; color: #475569; }
+
+  #load-file-btn {
+    padding: 4px 10px; border-radius: 6px; border: 1px solid #334155;
+    background: transparent; color: #94a3b8; font-size: 12px; cursor: pointer; transition: all .15s;
+  }
+  #load-file-btn:hover { border-color: #64748b; color: #e2e8f0; }
+  #hidden-file-input { display: none; }
+</style>
+</head>
+<body>
+
+<div id="upload-overlay">
+  <div class="upload-box" id="upload-box">
+    <span class="upload-icon">&#x1F4C2;</span>
+    <h2>Knowledge Graph Viewer</h2>
+    <p>Drop a <strong>knowledge-graph.json</strong> file here<br>or click to browse</p>
+    <span class="upload-hint">Generate with: python generate-knowledge-graph.py</span>
+    <input type="file" id="overlay-file-input" accept=".json">
+  </div>
+  <div class="auto-status" id="auto-status"></div>
+</div>
+
+<div id="toolbar" style="display:none">
+  <h1 id="graph-title">Knowledge Graph</h1>
+  <div class="sep"></div>
+  <button id="load-file-btn" title="Load a different JSON file">&#x1F4C2; Load</button>
+  <input type="file" id="hidden-file-input" accept=".json">
+  <div class="sep"></div>
+  <button class="filter-btn active" data-type="all">All</button>
+  <button class="filter-btn" data-type="project">Projects</button>
+  <button class="filter-btn" data-type="feature">Features</button>
+  <button class="filter-btn" data-type="viewComponent">Components</button>
+  <button class="filter-btn" data-type="controller">Controllers</button>
+  <button class="filter-btn" data-type="service">Services</button>
+  <button class="filter-btn" data-type="razorView">Pages</button>
+  <button class="filter-btn" data-type="query">Queries</button>
+  <button class="filter-btn" data-type="infrastructure">Infra</button>
+  <div class="sep"></div>
+  <button class="filter-btn" id="label-toggle" title="Toggle all labels">Aa</button>
+  <input id="search" type="text" placeholder="Search nodes…" />
+</div>
+
+<svg id="graph"></svg>
+<div id="tooltip"></div>
+
+<div id="legend"></div>
+<div id="stats"></div>
+<div id="detail-panel">
+  <div class="dp-breadcrumb" id="dp-breadcrumb"></div>
+  <div class="dp-header" id="dp-header"></div>
+  <div class="dp-body" id="dp-body"></div>
+</div>
+
+<script>
+const TYPE_COLORS = {
+  project:        '#3b82f6',
+  controller:     '#22d3ee',
+  feature:        '#a78bfa',
+  featureGroup:   '#c4b5fd',
+  viewComponent:  '#e879f9',
+  razorView:      '#f9a8d4',
+  query:          '#fbbf24',
+  service:        '#f472b6',
+  infrastructure: '#fb923c',
+  messageHandler: '#facc15',
+  model:          '#4ade80',
+  environment:    '#94a3b8',
+  testSuite:      '#6ee7b7',
+  monitoring:     '#f87171',
+  cicd:           '#c084fc',
+  businessContext:'#38bdf8'
+};
+
+const TYPE_RADIUS = {
+  project: 22, controller: 8, feature: 14, featureGroup: 12, viewComponent: 9, razorView: 8,
+  query: 7, service: 7, infrastructure: 16, messageHandler: 9, model: 6,
+  environment: 11, testSuite: 10, monitoring: 10, cicd: 14, businessContext: 12
+};
+
+// Label visibility tiers: tier 1 = always visible, tier 2 = zoom >= 0.6, tier 3 = zoom >= 1.2, tier 4 = zoom >= 2
+const LABEL_TIER = {
+  project: 1, infrastructure: 1, cicd: 1, businessContext: 1,
+  feature: 2, featureGroup: 2, environment: 2, testSuite: 2, monitoring: 2,
+  controller: 3, viewComponent: 3, razorView: 3, query: 3, messageHandler: 3,
+  service: 4, model: 4
+};
+const TIER_ZOOM = { 1: 0, 2: 0.6, 3: 1.2, 4: 2.0 };
+
+const EDGE_COLORS = {
+  dependsOn: '#475569', uses: '#334155', publishesTo: '#facc15',
+  consumesFrom: '#22d3ee', readsFrom: '#4ade80', writesTo: '#f472b6',
+  triggers: '#fb923c', serves: '#3b82f6', exposedBy: '#a78bfa',
+  deployedTo: '#94a3b8', builds: '#c084fc', tests: '#6ee7b7',
+  logsTo: '#f87171', monitoredBy: '#f87171', reportsTo: '#f87171',
+  configuredBy: '#94a3b8', integratesWith: '#94a3b8', produces: '#4ade80',
+  invokes: '#e879f9', dispatches: '#38bdf8', renders: '#4ade80',
+  belongsTo: '#334155', contains: '#475569', consumes: '#22d3ee',
+  injects: '#fb923c'
+};
+
+let graphData, rawEdges, simulation, svg, g, link, node, label;
+let activeFilter = 'all';
+let searchTerm = '';
+let currentZoom = 1;
+let labelsForced = false; // "Aa" toggle
+
+let initialized = false;
+
+// ── File handling ──
+
+function processGraphData(data, fileName) {
+  graphData = data;
+  rawEdges = data.edges.map(e => ({ source: e.source, target: e.target, relationship: e.relationship, detail: e.detail || null }));
+
+  // Update title
+  const title = (data.metadata && data.metadata.title) || fileName || 'Knowledge Graph';
+  document.getElementById('graph-title').textContent = title;
+  document.title = title + ' — Viewer';
+
+  // Hide overlay, show toolbar
+  document.getElementById('upload-overlay').classList.add('hidden');
+  document.getElementById('toolbar').style.display = 'flex';
+
+  if (!initialized) { init(); initialized = true; }
+  else { render(); }
+}
+
+function handleFileUpload(file) {
+  if (!file || !file.name.endsWith('.json')) {
+    alert('Please select a .json file');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!data.nodes || !data.edges) {
+        alert('Invalid knowledge graph JSON: missing "nodes" or "edges" arrays.');
+        return;
+      }
+      processGraphData(data, file.name);
+    } catch (err) {
+      alert('Failed to parse JSON: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+}
+
+// ── Auto-load attempt (if served via HTTP) ──
+(function autoLoad() {
+  const statusEl = document.getElementById('auto-status');
+  statusEl.textContent = 'Looking for knowledge-graph.json in current directory…';
+  fetch('knowledge-graph.json')
+    .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then(data => {
+      if (data.nodes && data.edges) {
+        statusEl.textContent = 'Found! Loading…';
+        processGraphData(data, 'knowledge-graph.json');
+      } else {
+        statusEl.textContent = 'No valid graph found. Upload a file above.';
+      }
+    })
+    .catch(() => {
+      statusEl.textContent = 'No knowledge-graph.json found. Upload a file above.';
+    });
+})();
+
+// ── Overlay interactions ──
+(function setupUploadUI() {
+  const overlay = document.getElementById('upload-overlay');
+  const box = document.getElementById('upload-box');
+  const overlayInput = document.getElementById('overlay-file-input');
+  const loadBtn = document.getElementById('load-file-btn');
+  const hiddenInput = document.getElementById('hidden-file-input');
+
+  // Click upload box → trigger file input
+  box.addEventListener('click', () => overlayInput.click());
+  overlayInput.addEventListener('change', e => { if (e.target.files[0]) handleFileUpload(e.target.files[0]); });
+
+  // Toolbar load button
+  loadBtn.addEventListener('click', () => hiddenInput.click());
+  hiddenInput.addEventListener('change', e => { if (e.target.files[0]) handleFileUpload(e.target.files[0]); });
+
+  // Drag-and-drop on overlay
+  box.addEventListener('dragover', e => { e.preventDefault(); box.classList.add('drag-over'); });
+  box.addEventListener('dragleave', () => box.classList.remove('drag-over'));
+  box.addEventListener('drop', e => {
+    e.preventDefault(); box.classList.remove('drag-over');
+    if (e.dataTransfer.files[0]) handleFileUpload(e.dataTransfer.files[0]);
+  });
+
+  // Drag-and-drop on body (when graph is visible)
+  document.body.addEventListener('dragover', e => e.preventDefault());
+  document.body.addEventListener('drop', e => {
+    e.preventDefault();
+    if (e.dataTransfer.files[0] && e.dataTransfer.files[0].name.endsWith('.json')) {
+      handleFileUpload(e.dataTransfer.files[0]);
+    }
+  });
+})();
+
+function init() {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+
+  svg = d3.select('#graph').attr('width', width).attr('height', height);
+
+  const zoom = d3.zoom().scaleExtent([0.05, 8]).on('zoom', e => {
+    g.attr('transform', e.transform);
+    currentZoom = e.transform.k;
+    updateLabelVisibility();
+  });
+  svg.call(zoom);
+
+  g = svg.append('g');
+
+  const defs = svg.append('defs');
+  Object.entries(EDGE_COLORS).forEach(([rel, color]) => {
+    defs.append('marker')
+      .attr('id', 'arrow-' + rel).attr('viewBox', '0 -5 10 10')
+      .attr('refX', 22).attr('refY', 0).attr('markerWidth', 5).attr('markerHeight', 5)
+      .attr('orient', 'auto')
+      .append('path').attr('d', 'M0,-5L10,0L0,5').attr('fill', color);
+  });
+
+  buildLegend();
+  render();
+
+  // Toolbar filters (skip label-toggle)
+  document.querySelectorAll('.filter-btn[data-type]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.filter-btn[data-type]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeFilter = btn.dataset.type;
+      render();
+    });
+  });
+
+  // Label toggle
+  document.getElementById('label-toggle').addEventListener('click', () => {
+    labelsForced = !labelsForced;
+    document.getElementById('label-toggle').classList.toggle('active', labelsForced);
+    updateLabelVisibility();
+  });
+
+  document.getElementById('search').addEventListener('input', e => {
+    searchTerm = e.target.value.toLowerCase();
+    applyVisibility();
+  });
+
+  window.addEventListener('resize', () => {
+    const w = window.innerWidth, h = window.innerHeight;
+    svg.attr('width', w).attr('height', h);
+    if (simulation) simulation.force('center', d3.forceCenter(w / 2, h / 2)).alpha(0.1).restart();
+  });
+}
+
+function getVisibleData() {
+  let nodes = graphData.nodes;
+  let edges = graphData.edges;
+
+  if (activeFilter !== 'all') {
+    const filterSet = new Set();
+    nodes.forEach(n => {
+      if (n.type === activeFilter) filterSet.add(n.id);
+      if (n.type === activeFilter && n.project) filterSet.add(n.project);
+    });
+    // For project filter: also show connected nodes
+    if (activeFilter === 'project') {
+      nodes.forEach(n => { if (n.type === 'project') filterSet.add(n.id); });
+      edges.forEach(e => {
+        if (filterSet.has(e.source) || filterSet.has(e.source?.id)) {
+          filterSet.add(typeof e.target === 'string' ? e.target : e.target?.id);
+        }
+        if (filterSet.has(e.target) || filterSet.has(e.target?.id)) {
+          filterSet.add(typeof e.source === 'string' ? e.source : e.source?.id);
+        }
+      });
+    }
+
+    nodes = nodes.filter(n => filterSet.has(n.id));
+    const nodeIds = new Set(nodes.map(n => n.id));
+    edges = edges.filter(e => {
+      const sid = typeof e.source === 'string' ? e.source : e.source?.id;
+      const tid = typeof e.target === 'string' ? e.target : e.target?.id;
+      return nodeIds.has(sid) && nodeIds.has(tid);
+    });
+  }
+
+  return { nodes: nodes.map(n => ({...n})), edges: edges.map(e => ({
+    source: typeof e.source === 'string' ? e.source : e.source.id,
+    target: typeof e.target === 'string' ? e.target : e.target.id,
+    relationship: e.relationship,
+    detail: e.detail || null
+  }))};
+}
+
+function edgeWidth(rel) {
+  if (rel === 'dependsOn') return 2.5;
+  if (rel === 'dispatches') return 2;
+  if (rel === 'renders') return 1.8;
+  if (rel === 'invokes') return 1.5;
+  if (rel === 'belongsTo') return 0.4;
+  if (rel === 'injects') return 0.7;
+  return 1;
+}
+
+function edgeOpacity(rel) {
+  if (rel === 'belongsTo') return 0.1;
+  if (rel === 'injects') return 0.25;
+  if (rel === 'dispatches') return 0.8;
+  if (rel === 'renders') return 0.7;
+  if (rel === 'invokes') return 0.55;
+  return 0.35;
+}
+
+function truncLabel(text, maxLen) {
+  return text.length > maxLen ? text.slice(0, maxLen - 1) + '\u2026' : text;
+}
+
+function render() {
+  g.selectAll('*').remove();
+  const data = getVisibleData();
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  const n = data.nodes.length;
+
+  // Adaptive forces based on graph size
+  const chargeStrength = d => {
+    if (d.type === 'project') return -800;
+    if (d.type === 'infrastructure' || d.type === 'cicd') return -400;
+    if (d.type === 'feature' || d.type === 'featureGroup') return -300;
+    return n > 300 ? -120 : -80;
+  };
+  const linkDist = d => {
+    if (d.relationship === 'belongsTo') return 50;
+    if (d.relationship === 'injects') return 80;
+    if (d.relationship === 'dependsOn') return 140;
+    if (d.relationship === 'renders') return 70;
+    return 100;
+  };
+
+  simulation = d3.forceSimulation(data.nodes)
+    .force('link', d3.forceLink(data.edges).id(d => d.id).distance(linkDist).strength(d => d.relationship === 'belongsTo' ? 0.8 : 0.3))
+    .force('charge', d3.forceManyBody().strength(chargeStrength))
+    .force('center', d3.forceCenter(width / 2, height / 2))
+    .force('collision', d3.forceCollide().radius(d => (TYPE_RADIUS[d.type] || 8) + 8))
+    .force('x', d3.forceX(width / 2).strength(0.015))
+    .force('y', d3.forceY(height / 2).strength(0.015));
+
+  // Links
+  link = g.append('g').attr('class','links').selectAll('line').data(data.edges).join('line')
+    .attr('stroke', d => EDGE_COLORS[d.relationship] || '#334155')
+    .attr('stroke-width', d => edgeWidth(d.relationship))
+    .attr('stroke-opacity', d => edgeOpacity(d.relationship))
+    .attr('stroke-dasharray', d => d.relationship === 'injects' ? '4,2' : d.relationship === 'dispatches' ? '6,3' : null)
+    .attr('marker-end', d => `url(#arrow-${d.relationship})`);
+  link.append('title').text(d => {
+    const src = typeof d.source === 'string' ? d.source : (d.source.label || d.source.id);
+    const tgt = typeof d.target === 'string' ? d.target : (d.target.label || d.target.id);
+    return `${src} —[${d.relationship}]→ ${tgt}${d.detail ? ' (' + d.detail + ')' : ''}`;
+  });
+
+  // Nodes
+  node = g.append('g').attr('class','nodes').selectAll('circle').data(data.nodes).join('circle')
+    .attr('r', d => TYPE_RADIUS[d.type] || 8)
+    .attr('fill', d => TYPE_COLORS[d.type] || '#64748b')
+    .attr('stroke', d => {
+      const c = TYPE_COLORS[d.type] || '#64748b';
+      return c + '88'; // semi-transparent ring matching type color
+    })
+    .attr('stroke-width', d => d.type === 'project' ? 3 : 1.5)
+    .attr('cursor', 'pointer')
+    .on('mouseover', showTooltip)
+    .on('mousemove', moveTooltip)
+    .on('mouseout', hideTooltip)
+    .on('click', highlightConnected)
+    .call(d3.drag()
+      .on('start', dragStarted)
+      .on('drag', dragged)
+      .on('end', dragEnded));
+
+  // Labels — ALL nodes get labels, visibility controlled by zoom tier
+  label = g.append('g').attr('class','labels').selectAll('text').data(data.nodes).join('text')
+    .text(d => {
+      const tier = LABEL_TIER[d.type] || 4;
+      if (tier <= 2) return d.label;
+      return truncLabel(d.label, 22);
+    })
+    .attr('font-size', d => {
+      if (d.type === 'project') return 12;
+      if (['feature','featureGroup','infrastructure','cicd','businessContext'].includes(d.type)) return 10;
+      return 9;
+    })
+    .attr('font-weight', d => d.type === 'project' ? '700' : ['feature','infrastructure','cicd'].includes(d.type) ? '600' : '400')
+    .attr('fill', d => {
+      const c = TYPE_COLORS[d.type] || '#94a3b8';
+      if (d.type === 'project') return '#e2e8f0';
+      if (['feature','featureGroup','infrastructure','cicd','businessContext'].includes(d.type)) return c;
+      return '#94a3b8';
+    })
+    .attr('text-anchor', 'middle')
+    .attr('dy', d => (TYPE_RADIUS[d.type] || 8) + 13)
+    .attr('pointer-events', 'none');
+
+  updateLabelVisibility();
+
+  simulation.on('tick', () => {
+    link.attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+        .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+    node.attr('cx', d => d.x).attr('cy', d => d.y);
+    label.attr('x', d => d.x).attr('y', d => d.y);
+  });
+
+  document.getElementById('stats').textContent = `${data.nodes.length} nodes · ${data.edges.length} edges · scroll to zoom · click node to inspect`;
+  applyVisibility();
+}
+
+function updateLabelVisibility() {
+  if (!label) return;
+  if (searchTerm) return; // search handles its own visibility
+  label.each(function(d) {
+    const tier = LABEL_TIER[d.type] || 4;
+    const minZoom = TIER_ZOOM[tier] || 2;
+    const show = labelsForced || currentZoom >= minZoom;
+    d3.select(this).attr('display', show ? 'block' : 'none');
+    // Adjust opacity by tier at current zoom
+    if (show) {
+      const o = tier === 1 ? 1 : tier === 2 ? 0.85 : tier === 3 ? 0.7 : 0.55;
+      d3.select(this).attr('opacity', o);
+    }
+  });
+}
+
+function applyVisibility() {
+  if (!node) return;
+  if (!searchTerm) {
+    node.attr('opacity', 1);
+    link.attr('stroke-opacity', d => edgeOpacity(d.relationship));
+    updateLabelVisibility();
+    return;
+  }
+  const matchIds = new Set();
+  node.each(function(d) {
+    const match = d.label.toLowerCase().includes(searchTerm) ||
+                  (d.namespace || '').toLowerCase().includes(searchTerm) ||
+                  (d.description || '').toLowerCase().includes(searchTerm) ||
+                  (d.domain || '').toLowerCase().includes(searchTerm) ||
+                  (d.feature || '').toLowerCase().includes(searchTerm) ||
+                  (d.id || '').toLowerCase().includes(searchTerm) ||
+                  (d.type || '').toLowerCase().includes(searchTerm);
+    if (match) matchIds.add(d.id);
+  });
+
+  node.attr('opacity', d => matchIds.has(d.id) ? 1 : 0.06);
+  label.attr('opacity', d => matchIds.has(d.id) ? 1 : 0.03)
+       .attr('display', d => matchIds.has(d.id) ? 'block' : 'none');
+  link.attr('stroke-opacity', d => {
+    const sid = typeof d.source === 'string' ? d.source : d.source.id;
+    const tid = typeof d.target === 'string' ? d.target : d.target.id;
+    return (matchIds.has(sid) || matchIds.has(tid)) ? 0.5 : 0.02;
+  });
+}
+
+let panelHistory = [];
+
+function focusNodeOnGraph(nodeId) {
+  const connectedIds = new Set([nodeId]);
+  link.each(function(l) {
+    const sid = typeof l.source === 'string' ? l.source : l.source.id;
+    const tid = typeof l.target === 'string' ? l.target : l.target.id;
+    if (sid === nodeId) connectedIds.add(tid);
+    if (tid === nodeId) connectedIds.add(sid);
+  });
+  node.attr('opacity', n => connectedIds.has(n.id) ? 1 : 0.06);
+  label.attr('opacity', n => connectedIds.has(n.id) ? 1 : 0.03)
+       .attr('display', n => connectedIds.has(n.id) ? 'block' : 'none');
+  link.attr('stroke-opacity', l => {
+    const sid = typeof l.source === 'string' ? l.source : l.source.id;
+    const tid = typeof l.target === 'string' ? l.target : l.target.id;
+    return (sid === nodeId || tid === nodeId) ? 0.9 : 0.02;
+  }).attr('stroke-width', l => {
+    const sid = typeof l.source === 'string' ? l.source : l.source.id;
+    const tid = typeof l.target === 'string' ? l.target : l.target.id;
+    return (sid === nodeId || tid === nodeId) ? 2.5 : 0.3;
+  });
+}
+
+function resetGraphHighlight() {
+  if (!node) return;
+  node.attr('opacity', 1);
+  link.attr('stroke-opacity', l => edgeOpacity(l.relationship))
+      .attr('stroke-width', l => edgeWidth(l.relationship));
+  updateLabelVisibility();
+}
+
+function highlightConnected(event, d) {
+  event.stopPropagation();
+  openDetailPanel(d.id, true);
+}
+
+function closeDetailPanel() {
+  document.getElementById('detail-panel').classList.remove('open');
+  panelHistory = [];
+  resetGraphHighlight();
+}
+
+function openDetailPanel(nodeId, pushHistory) {
+  const nodeMap = {};
+  graphData.nodes.forEach(n => nodeMap[n.id] = n);
+  const d = nodeMap[nodeId];
+  if (!d) return;
+
+  if (pushHistory) {
+    const idx = panelHistory.indexOf(nodeId);
+    if (idx >= 0) panelHistory = panelHistory.slice(0, idx + 1);
+    else panelHistory.push(nodeId);
+  }
+
+  focusNodeOnGraph(nodeId);
+
+  const outgoing = {};
+  const incoming = {};
+  rawEdges.forEach(e => {
+    const sid = e.source;
+    const tid = e.target;
+    if (sid === nodeId) {
+      if (!outgoing[e.relationship]) outgoing[e.relationship] = [];
+      if (nodeMap[tid]) outgoing[e.relationship].push({ node: nodeMap[tid], detail: e.detail });
+    }
+    if (tid === nodeId) {
+      if (!incoming[e.relationship]) incoming[e.relationship] = [];
+      if (nodeMap[sid]) incoming[e.relationship].push({ node: nodeMap[sid], detail: e.detail });
+    }
+  });
+
+  // Breadcrumb
+  const bcEl = document.getElementById('dp-breadcrumb');
+  let bcHtml = '';
+  panelHistory.forEach((hid, i) => {
+    const hn = nodeMap[hid];
+    if (i > 0) bcHtml += '<span class="dp-crumb-sep">\u203a</span>';
+    if (i === panelHistory.length - 1) {
+      bcHtml += `<span class="dp-crumb-current">${hn ? hn.label : hid}</span>`;
+    } else {
+      bcHtml += `<button class="dp-crumb" onclick="openDetailPanel('${hid}', false); panelHistory = panelHistory.slice(0, ${i + 1});">${hn ? hn.label : hid}</button>`;
+    }
+  });
+  bcEl.innerHTML = bcHtml;
+
+  // Header
+  const hdrEl = document.getElementById('dp-header');
+  const color = TYPE_COLORS[d.type] || '#64748b';
+  let hdrHtml = `<div class="dp-header-info">`;
+  hdrHtml += `<span class="dp-badge" style="background:${color}22;color:${color}">${d.type}</span>`;
+  hdrHtml += `<div class="dp-title" style="color:${color}">${d.label}</div>`;
+  if (d.description) hdrHtml += `<div class="dp-desc">${d.description}</div>`;
+  if (d.routes) hdrHtml += `<div class="dp-meta">Routes: ${d.routes.map(r=>'<code style="color:#60a5fa;font-size:10px">'+r+'</code>').join('<br>')}</div>`;
+  if (d.path) hdrHtml += `<div class="dp-meta">Path: ${d.path}</div>`;
+  if (d.feature) hdrHtml += `<div class="dp-meta">Feature: ${d.feature}</div>`;
+  if (d.namespace) hdrHtml += `<div class="dp-meta">Namespace: ${d.namespace}</div>`;
+  if (d.baseUrl) hdrHtml += `<div class="dp-meta">URL: ${d.baseUrl}</div>`;
+  hdrHtml += `<div class="dp-meta" style="opacity:.5">id: ${d.id}</div>`;
+  hdrHtml += `</div>`;
+  hdrHtml += `<button class="dp-close" onclick="closeDetailPanel()" title="Close">\u2715</button>`;
+  hdrEl.innerHTML = hdrHtml;
+
+  // Body
+  const bodyEl = document.getElementById('dp-body');
+  let bodyHtml = '';
+
+  const EDGE_LABELS = {
+    renders: 'Renders (component tree)', dispatches: 'Dispatches (MediatR)', injects: 'Injects (DI)',
+    invokes: 'Invokes', uses: 'Uses', contains: 'Contains', consumes: 'Consumes',
+    produces: 'Produces', triggers: 'Triggers', belongsTo: 'Belongs To', dependsOn: 'Depends On',
+    deployedTo: 'Deployed To', builds: 'Builds', tests: 'Tests', serves: 'Serves',
+    exposedBy: 'Exposed By', publishesTo: 'Publishes To', consumesFrom: 'Consumes From',
+    readsFrom: 'Reads From', writesTo: 'Writes To', logsTo: 'Logs To',
+    monitoredBy: 'Monitored By', reportsTo: 'Reports To', configuredBy: 'Configured By'
+  };
+  const EDGE_LABELS_IN = {
+    renders: 'Rendered by', dispatches: 'Dispatched by', injects: 'Injected by',
+    invokes: 'Invoked by', uses: 'Used by', contains: 'Contained in', consumes: 'Consumed by',
+    produces: 'Produced by', triggers: 'Triggered by', belongsTo: 'Parent of', dependsOn: 'Depended on by',
+    deployedTo: 'Hosts', builds: 'Built by', tests: 'Tested by', serves: 'Served by',
+    exposedBy: 'Exposes', publishesTo: 'Receives from', consumesFrom: 'Produces for',
+    readsFrom: 'Read by', writesTo: 'Written by', logsTo: 'Receives logs from',
+    monitoredBy: 'Monitors', reportsTo: 'Receives reports from'
+  };
+
+  const relOrder = ['renders','dispatches','injects','invokes','uses','dependsOn','deployedTo','serves','publishesTo','consumesFrom','readsFrom','writesTo','builds','tests','logsTo','monitoredBy','reportsTo','exposedBy','contains','consumes','produces','triggers','belongsTo','configuredBy'];
+
+  function renderSection(items, labelText, edgeColor) {
+    bodyHtml += `<div class="dp-section">`;
+    bodyHtml += `<div class="dp-section-title"><span class="dp-edge-line" style="background:${edgeColor}"></span>${labelText} <span class="dp-count">${items.length}</span></div>`;
+    items.forEach(item => {
+      const nc = TYPE_COLORS[item.node.type] || '#64748b';
+      bodyHtml += `<div class="dp-item" onclick="openDetailPanel('${item.node.id}', true)">`;
+      bodyHtml += `<span class="dp-item-dot" style="background:${nc}"></span>`;
+      bodyHtml += `<span class="dp-item-label">${item.node.label}</span>`;
+      bodyHtml += `<span class="dp-item-type">${item.node.type}</span>`;
+      bodyHtml += `<span class="dp-item-arrow">\u203a</span>`;
+      bodyHtml += `</div>`;
+      if (item.detail) bodyHtml += `<div class="dp-item-detail">${item.detail}</div>`;
+    });
+    bodyHtml += `</div>`;
+  }
+
+  // Outgoing
+  relOrder.forEach(rel => {
+    if (outgoing[rel] && outgoing[rel].length > 0)
+      renderSection(outgoing[rel], EDGE_LABELS[rel] || rel, EDGE_COLORS[rel] || '#475569');
+  });
+  Object.keys(outgoing).filter(r => !relOrder.includes(r)).forEach(rel => {
+    renderSection(outgoing[rel], rel, EDGE_COLORS[rel] || '#475569');
+  });
+
+  // Incoming
+  relOrder.forEach(rel => {
+    if (incoming[rel] && incoming[rel].length > 0)
+      renderSection(incoming[rel], EDGE_LABELS_IN[rel] || '\u2190 ' + rel, EDGE_COLORS[rel] || '#475569');
+  });
+  Object.keys(incoming).filter(r => !relOrder.includes(r)).forEach(rel => {
+    renderSection(incoming[rel], '\u2190 ' + rel, EDGE_COLORS[rel] || '#475569');
+  });
+
+  // Siblings in same feature
+  if (d.feature) {
+    const siblings = graphData.nodes.filter(n => n.feature === d.feature && n.id !== nodeId);
+    if (siblings.length > 0) {
+      bodyHtml += `<div class="dp-section">`;
+      bodyHtml += `<div class="dp-section-title"><span class="dp-edge-line" style="background:#64748b"></span>Same Feature <span class="dp-count">${siblings.length}</span></div>`;
+      siblings.forEach(sib => {
+        const nc = TYPE_COLORS[sib.type] || '#64748b';
+        bodyHtml += `<div class="dp-item" onclick="openDetailPanel('${sib.id}', true)">`;
+        bodyHtml += `<span class="dp-item-dot" style="background:${nc}"></span>`;
+        bodyHtml += `<span class="dp-item-label">${sib.label}</span>`;
+        bodyHtml += `<span class="dp-item-type">${sib.type}</span>`;
+        bodyHtml += `<span class="dp-item-arrow">\u203a</span>`;
+        bodyHtml += `</div>`;
+      });
+      bodyHtml += `</div>`;
+    }
+  }
+
+  if (!bodyHtml) bodyHtml = '<div class="dp-section"><div class="dp-meta" style="padding:12px 0">No connections found.</div></div>';
+  bodyEl.innerHTML = bodyHtml;
+  document.getElementById('detail-panel').classList.add('open');
+}
+
+function showTooltip(event, d) {
+  const tt = document.getElementById('tooltip');
+  let html = `<div class="tt-type">${d.type}</div><div class="tt-label" style="color:${TYPE_COLORS[d.type]}">${d.label}</div>`;
+  if (d.description) html += `<div class="tt-desc">${d.description}</div>`;
+  if (d.namespace) html += `<div class="tt-meta">Namespace: ${d.namespace}</div>`;
+  if (d.path) html += `<div class="tt-meta">Path: ${d.path}</div>`;
+  if (d.routes) html += `<div class="tt-meta">Routes: ${d.routes.join(', ')}</div>`;
+  if (d.domain) html += `<div class="tt-meta">Domain: ${d.domain}</div>`;
+  if (d.kind) html += `<div class="tt-meta">Kind: ${d.kind}</div>`;
+  if (d.feature) html += `<div class="tt-meta">Feature: ${d.feature}</div>`;
+  if (d.baseUrl) html += `<div class="tt-meta">URL: ${d.baseUrl}</div>`;
+  if (d.id) html += `<div class="tt-meta" style="opacity:0.5">id: ${d.id}</div>`;
+  if (rawEdges) {
+    const conns = rawEdges.filter(e => e.source === d.id || e.target === d.id);
+    if (conns.length > 0) html += `<div class="tt-meta">Connections: ${conns.length}</div>`;
+  }
+  tt.innerHTML = html;
+  tt.style.display = 'block';
+}
+function moveTooltip(event) {
+  const tt = document.getElementById('tooltip');
+  tt.style.left = (event.clientX + 14) + 'px';
+  tt.style.top = (event.clientY - 10) + 'px';
+}
+function hideTooltip() { document.getElementById('tooltip').style.display = 'none'; }
+
+function dragStarted(event, d) { if (!event.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }
+function dragged(event, d) { d.fx = event.x; d.fy = event.y; }
+function dragEnded(event, d) { if (!event.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; }
+
+document.getElementById('graph').addEventListener('click', function(e) {
+  if (e.target.tagName === 'svg') closeDetailPanel();
+});
+
+function buildLegend() {
+  const legend = document.getElementById('legend');
+  Object.entries(TYPE_COLORS).forEach(([type, color]) => {
+    const div = document.createElement('div');
+    div.className = 'legend-item';
+    div.innerHTML = `<span class="legend-dot" style="background:${color}"></span>${type}`;
+    legend.appendChild(div);
+  });
+}
+</script>
+</body>
+</html>
