@@ -336,10 +336,7 @@ Known limitations:
 ---
 
 ## License
-
-```text
-MIT License
-```
+This project is licensed under the terms of the MIT open source license
 
 
 ## Author
