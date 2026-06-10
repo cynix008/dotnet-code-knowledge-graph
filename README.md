@@ -78,6 +78,7 @@ The generator scans your C# solution and detects common ASP.NET / .NET applicati
 | Razor Pages | PageModel-based Razor Pages |
 | ViewComponents | ASP.NET ViewComponent classes |
 | Services | Service classes and interface-based implementations |
+| Interfaces | Interfaces implemented by graph classes and services |
 | MediatR requests | Queries, commands, requests, and stream requests |
 | MediatR handlers | Request, command, query, notification, and stream handlers |
 | Constructor DI | Constructor-injected dependencies |
@@ -98,6 +99,7 @@ Example relationships:
 Project      → dependsOn  → Project
 Class        → belongsTo  → Feature
 Controller   → injects    → Service
+Service      → implements → Interface
 Razor Page   → renders    → ViewComponent
 Service      → dispatches → Query / Command
 Handler      → invokes    → Query / Command
@@ -108,6 +110,7 @@ Handler      → invokes    → Query / Command
 | `dependsOn` | One project references another project |
 | `belongsTo` | A class belongs to a detected feature/folder |
 | `injects` | A class receives another service/class through constructor dependency injection |
+| `implements` | A class or service implements an interface |
 | `dispatches` | A class sends or publishes a MediatR request |
 | `invokes` | A handler handles a MediatR request |
 | `renders` | A Razor file renders a ViewComponent |
@@ -137,6 +140,7 @@ Or simply place these files inside any folder:
 
 ```text
 generate-knowledge-graph.py
+knowledge_graph/
 knowledge-graph-viewer.html
 README.md
 ```
@@ -264,6 +268,7 @@ The generated JSON has this structure:
 | `razorView` | Razor Page model |
 | `viewComponent` | ASP.NET ViewComponent |
 | `service` | Application, domain, or infrastructure service |
+| `interface` | C# interface implemented by a graph class or service |
 | `query` | MediatR query, command, request, or stream request |
 | `messageHandler` | MediatR request/command/query/notification handler |
 | `model` | Model, DTO, request, response, event, or view model |
@@ -271,6 +276,14 @@ The generated JSON has this structure:
 ---
 
 ## Suggested Repository Structure
+
+The Python implementation is separated by responsibility:
+
+- `generate-knowledge-graph.py` keeps the existing command and import surface.
+- `knowledge_graph/core.py` owns parsing, type models, and classification.
+- `knowledge_graph/builder.py` owns graph construction and serialization.
+- `knowledge_graph/cli.py` owns command-line input and output.
+- `knowledge_graph/__init__.py` defines the public Python API.
 
 ```text
 .

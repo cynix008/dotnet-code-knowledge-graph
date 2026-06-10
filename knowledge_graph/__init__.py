@@ -1,9 +1,8 @@
-#!/usr/bin/env python3
-"""Backward-compatible entry point for the knowledge graph generator."""
+"""Public API for the C# knowledge graph generator."""
 
-from knowledge_graph import (
+from .builder import KnowledgeGraphBuilder
+from .core import (
     ClassInfo,
-    KnowledgeGraphBuilder,
     classify_type,
     generic_args,
     generic_root,
@@ -17,16 +16,13 @@ from knowledge_graph import (
     type_contract_key,
     vc_tag_to_pascal,
 )
-from knowledge_graph.cli import find_sln_files, main
 
 __all__ = [
     "ClassInfo",
     "KnowledgeGraphBuilder",
     "classify_type",
-    "find_sln_files",
     "generic_args",
     "generic_root",
-    "main",
     "parse_cs_file",
     "parse_cshtml_file",
     "parse_csproj",
@@ -37,7 +33,3 @@ __all__ = [
     "type_contract_key",
     "vc_tag_to_pascal",
 ]
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
