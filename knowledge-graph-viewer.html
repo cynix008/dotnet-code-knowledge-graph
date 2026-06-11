@@ -265,11 +265,13 @@ const EDGE_COLORS = {
   injects: '#fb923c', implements: '#2dd4bf'
 };
 
-let graphData, rawEdges, simulation, svg, g, link, node, label;
+let graphData, rawEdges, simulation, svg, g, link, node, label, zoomBehavior;
 let activeFilter = 'all';
 let searchTerm = '';
 let currentZoom = 1;
 let labelsForced = false; // "Aa" toggle
+let selectedNodeId = null;
+let selectedConnectedIds = new Set();
 
 let initialized = false;
 
@@ -395,12 +397,12 @@ function init() {
 
   svg = d3.select('#graph').attr('width', width).attr('height', height);
 
-  const zoom = d3.zoom().scaleExtent([0.05, 8]).on('zoom', e => {
+  zoomBehavior = d3.zoom().scaleExtent([0.05, 8]).on('zoom', e => {
     g.attr('transform', e.transform);
     currentZoom = e.transform.k;
     updateLabelVisibility();
   });
-  svg.call(zoom);
+  svg.call(zoomBehavior);
 
   g = svg.append('g');
 
@@ -510,6 +512,19 @@ function truncLabel(text, maxLen) {
   return text.length > maxLen ? text.slice(0, maxLen - 1) + '\u2026' : text;
 }
 
+function graphLinkDistance(d) {
+  if (d.relationship === 'belongsTo') return 50;
+  if (d.relationship === 'injects') return 80;
+  if (d.relationship === 'implements') return 65;
+  if (d.relationship === 'dependsOn') return 140;
+  if (d.relationship === 'renders') return 70;
+  return 100;
+}
+
+function graphLinkStrength(d) {
+  return d.relationship === 'belongsTo' ? 0.8 : 0.3;
+}
+
 function render() {
   g.selectAll('*').remove();
   const data = getVisibleData();
@@ -524,17 +539,8 @@ function render() {
     if (d.type === 'feature' || d.type === 'featureGroup') return -300;
     return n > 300 ? -120 : -80;
   };
-  const linkDist = d => {
-    if (d.relationship === 'belongsTo') return 50;
-    if (d.relationship === 'injects') return 80;
-    if (d.relationship === 'implements') return 65;
-    if (d.relationship === 'dependsOn') return 140;
-    if (d.relationship === 'renders') return 70;
-    return 100;
-  };
-
   simulation = d3.forceSimulation(data.nodes)
-    .force('link', d3.forceLink(data.edges).id(d => d.id).distance(linkDist).strength(d => d.relationship === 'belongsTo' ? 0.8 : 0.3))
+    .force('link', d3.forceLink(data.edges).id(d => d.id).distance(graphLinkDistance).strength(graphLinkStrength))
     .force('charge', d3.forceManyBody().strength(chargeStrength))
     .force('center', d3.forceCenter(width / 2, height / 2))
     .force('collision', d3.forceCollide().radius(d => (TYPE_RADIUS[d.type] || 8) + 8))
@@ -611,13 +617,39 @@ function render() {
 
 function updateLabelVisibility() {
   if (!label) return;
-  if (searchTerm) return; // search handles its own visibility
+
   label.each(function(d) {
+    if (labelsForced) {
+      d3.select(this).attr('display', 'block').attr('opacity', 1);
+      return;
+    }
+
+    if (selectedNodeId) {
+      const connected = selectedConnectedIds.has(d.id);
+      d3.select(this)
+        .attr('display', connected ? 'block' : 'none')
+        .attr('opacity', connected ? 1 : 0);
+      return;
+    }
+
+    if (searchTerm) {
+      const match = d.label.toLowerCase().includes(searchTerm) ||
+                    (d.namespace || '').toLowerCase().includes(searchTerm) ||
+                    (d.description || '').toLowerCase().includes(searchTerm) ||
+                    (d.domain || '').toLowerCase().includes(searchTerm) ||
+                    (d.feature || '').toLowerCase().includes(searchTerm) ||
+                    (d.id || '').toLowerCase().includes(searchTerm) ||
+                    (d.type || '').toLowerCase().includes(searchTerm);
+      d3.select(this)
+        .attr('display', match ? 'block' : 'none')
+        .attr('opacity', match ? 1 : 0);
+      return;
+    }
+
     const tier = LABEL_TIER[d.type] || 4;
     const minZoom = TIER_ZOOM[tier] || 2;
-    const show = labelsForced || currentZoom >= minZoom;
+    const show = currentZoom >= minZoom;
     d3.select(this).attr('display', show ? 'block' : 'none');
-    // Adjust opacity by tier at current zoom
     if (show) {
       const o = tier === 1 ? 1 : tier === 2 ? 0.85 : tier === 3 ? 0.7 : 0.55;
       d3.select(this).attr('opacity', o);
@@ -646,16 +678,72 @@ function applyVisibility() {
   });
 
   node.attr('opacity', d => matchIds.has(d.id) ? 1 : 0.06);
-  label.attr('opacity', d => matchIds.has(d.id) ? 1 : 0.03)
-       .attr('display', d => matchIds.has(d.id) ? 'block' : 'none');
   link.attr('stroke-opacity', d => {
     const sid = typeof d.source === 'string' ? d.source : d.source.id;
     const tid = typeof d.target === 'string' ? d.target : d.target.id;
     return (matchIds.has(sid) || matchIds.has(tid)) ? 0.5 : 0.02;
   });
+  updateLabelVisibility();
 }
 
 let panelHistory = [];
+
+function edgeTouchesNode(edge, nodeId) {
+  const sid = typeof edge.source === 'string' ? edge.source : edge.source.id;
+  const tid = typeof edge.target === 'string' ? edge.target : edge.target.id;
+  return sid === nodeId || tid === nodeId;
+}
+
+function moveSelectionToFront(nodeId) {
+  node.filter(d => d.id === nodeId).raise();
+  label.filter(d => d.id === nodeId).raise();
+}
+
+function centerViewportOnNode(d) {
+  if (!zoomBehavior || !d || !Number.isFinite(d.x) || !Number.isFinite(d.y)) return;
+
+  const panelWidth = Math.min(380, window.innerWidth);
+  const visibleGraphWidth = Math.max(120, window.innerWidth - panelWidth);
+  const focusX = visibleGraphWidth / 2;
+  const focusY = window.innerHeight / 2;
+  const scale = Math.max(currentZoom, 0.9);
+  const transform = d3.zoomIdentity
+    .translate(focusX, focusY)
+    .scale(scale)
+    .translate(-d.x, -d.y);
+
+  svg.transition().duration(600).ease(d3.easeCubicOut)
+    .call(zoomBehavior.transform, transform);
+}
+
+function clusterConnectedNodes(nodeId, connectedIds) {
+  let selectedNode = null;
+
+  node.each(d => {
+    if (d.id === selectedNodeId && d.id !== nodeId) {
+      d.fx = null;
+      d.fy = null;
+    }
+    if (d.id === nodeId) selectedNode = d;
+  });
+  if (!selectedNode) return;
+
+  selectedNodeId = nodeId;
+  selectedNode.fx = selectedNode.x;
+  selectedNode.fy = selectedNode.y;
+
+  simulation.force('link')
+    .distance(edge => edgeTouchesNode(edge, nodeId) ? 58 : graphLinkDistance(edge))
+    .strength(edge => edgeTouchesNode(edge, nodeId) ? 0.95 : graphLinkStrength(edge));
+  simulation.force('selection',
+    d3.forceRadial(68, selectedNode.x, selectedNode.y)
+      .strength(d => d.id !== nodeId && connectedIds.has(d.id) ? 0.4 : 0)
+  );
+  simulation.alpha(0.55).restart();
+
+  moveSelectionToFront(nodeId);
+  centerViewportOnNode(selectedNode);
+}
 
 function focusNodeOnGraph(nodeId) {
   const connectedIds = new Set([nodeId]);
@@ -665,9 +753,10 @@ function focusNodeOnGraph(nodeId) {
     if (sid === nodeId) connectedIds.add(tid);
     if (tid === nodeId) connectedIds.add(sid);
   });
+  selectedNodeId = nodeId;
+  selectedConnectedIds = connectedIds;
   node.attr('opacity', n => connectedIds.has(n.id) ? 1 : 0.06);
-  label.attr('opacity', n => connectedIds.has(n.id) ? 1 : 0.03)
-       .attr('display', n => connectedIds.has(n.id) ? 'block' : 'none');
+  updateLabelVisibility();
   link.attr('stroke-opacity', l => {
     const sid = typeof l.source === 'string' ? l.source : l.source.id;
     const tid = typeof l.target === 'string' ? l.target : l.target.id;
@@ -677,11 +766,32 @@ function focusNodeOnGraph(nodeId) {
     const tid = typeof l.target === 'string' ? l.target : l.target.id;
     return (sid === nodeId || tid === nodeId) ? 2.5 : 0.3;
   });
+  node.attr('stroke', n => n.id === nodeId ? '#f8fafc' : (TYPE_COLORS[n.type] || '#64748b') + '88')
+      .attr('stroke-width', n => n.id === nodeId ? 4 : n.type === 'project' ? 3 : 1.5);
+
+  clusterConnectedNodes(nodeId, connectedIds);
 }
 
 function resetGraphHighlight() {
   if (!node) return;
+  node.each(d => {
+    if (d.id === selectedNodeId) {
+      d.fx = null;
+      d.fy = null;
+    }
+  });
+  selectedNodeId = null;
+  selectedConnectedIds = new Set();
+  if (simulation) {
+    simulation.force('selection', null);
+    simulation.force('link')
+      .distance(graphLinkDistance)
+      .strength(graphLinkStrength);
+    simulation.alpha(0.25).restart();
+  }
   node.attr('opacity', 1);
+  node.attr('stroke', d => (TYPE_COLORS[d.type] || '#64748b') + '88')
+      .attr('stroke-width', d => d.type === 'project' ? 3 : 1.5);
   link.attr('stroke-opacity', l => edgeOpacity(l.relationship))
       .attr('stroke-width', l => edgeWidth(l.relationship));
   updateLabelVisibility();
